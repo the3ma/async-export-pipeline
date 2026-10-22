@@ -6,6 +6,6 @@ import { handlers } from './handlers';
 export async function startMockWorker() {
   db.reset({ autoProgressMs: 3_000, seedJobs: true });
   const worker = setupWorker(...handlers);
-  await worker.start({ onUnhandledRequest: 'bypass', quiet: false });
+  await worker.start({ onUnhandledFrame: 'bypass', quiet: false });
   console.info('[mock] MSW active: /api is served from memory (no backend required).');
 }
