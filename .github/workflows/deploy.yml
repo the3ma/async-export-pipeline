@@ -36,7 +36,7 @@ jobs:
     if: github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.18"
@@ -74,7 +74,7 @@ jobs:
           - { name: worker, context: ., file: services/worker/Dockerfile }
           - { name: web, context: web, file: web/Dockerfile }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -113,7 +113,7 @@ jobs:
             echo "Set the repository variable \`AWS_DEPLOY_ROLE_ARN\` (an IAM role that trusts GitHub OIDC) to deploy."
             echo "The Lambda artifacts and container images were built and published."
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.AWS_ROLE != ''
       - uses: actions/download-artifact@v4
         if: env.AWS_ROLE != ''
