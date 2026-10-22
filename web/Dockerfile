@@ -18,7 +18,7 @@ FROM scratch AS dist
 COPY --from=build /app/dist/ /
 
 # ---- serve (default): standalone nginx with SPA fallback --------------------
-FROM nginx:1.27-alpine AS serve
+FROM nginx:1.29-alpine AS serve
 # API_UPSTREAM is resolved at request time, so the container starts even if the API is down.
 ENV API_UPSTREAM=http://api:8000 \
     DEMO_USER_ID=demo-user \
