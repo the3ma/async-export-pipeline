@@ -49,7 +49,7 @@ sequenceDiagram
   participant B as Browser
   participant A as API
   participant D as Database
-  rect rgb(253, 236, 236)
+  rect rgba(220, 70, 70, 0.12)
   Note over U,D: Before - one synchronous request
   U->>B: Export
   B->>A: GET /export (held open)
@@ -58,7 +58,7 @@ sequenceDiagram
   Note over A: whole file built in memory
   A--xB: gateway timeout / out of memory
   end
-  rect rgb(234, 246, 236)
+  rect rgba(60, 170, 90, 0.12)
   Note over U,D: After - queued job
   U->>B: Export
   B->>A: POST /api/exports
