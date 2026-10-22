@@ -70,7 +70,7 @@ _Source: [`docs/diagrams/01-architecture.mmd`](docs/diagrams/01-architecture.mmd
 | API | [`services/api`](services/api) | FastAPI, psycopg 3, Pydantic; runs on uvicorn locally and on Lambda via Mangum |
 | Worker | [`services/worker`](services/worker) | Python 3.12 Lambda (arm64); a poller container runs the same handler locally |
 | Shared kernel | [`services/shared`](services/shared) | job model, job store, queue messages, naming, cursors |
-| Web UI | [`web`](web) | Vite, React 18, TypeScript strict, MSW mock mode, Vitest, WCAG 2.1 AA |
+| Web UI | [`web`](web) | Vite, React 19, TypeScript strict, MSW mock mode, Vitest, WCAG 2.1 AA |
 | Infrastructure | [`infra`](infra) | AWS CDK v2 (TypeScript), cdk-nag, CloudWatch alarms |
 | Database | [`db`](db) | PostgreSQL 16 schema (append-only trigger, read-only `exporter` role) and a seed script |
 | Local stack | [`docker-compose.yml`](docker-compose.yml) | Postgres, LocalStack (S3/SQS/DynamoDB), Mailpit, nginx |

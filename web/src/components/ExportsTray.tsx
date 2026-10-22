@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { KeyboardEvent, RefObject } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useExports } from '../state/ExportsContext';
 import { ExportsList } from './ExportsList';
 import styles from './ExportsTray.module.css';
@@ -9,7 +9,7 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Slide-over modal dialog listing the user's recent exports. */
-export function ExportsTray({ returnFocusTo }: { returnFocusTo: RefObject<HTMLElement> }) {
+export function ExportsTray({ returnFocusTo }: { returnFocusTo: RefObject<HTMLElement | null> }) {
   const { trayOpen, setTrayOpen, jobs, loaded, error, markSeen } = useExports();
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { listExports } from '../api/endpoints';
 import type { ExportJob } from '../api/types';
 import { ExportsList } from '../components/ExportsList';

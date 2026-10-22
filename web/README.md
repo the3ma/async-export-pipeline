@@ -1,6 +1,6 @@
 # web — Activity Log UI
 
-Vite + React 18 + TypeScript (strict) single-page app for the activity log and its asynchronous
+Vite + React 19 + TypeScript (strict) single-page app for the activity log and its asynchronous
 exports. It implements the browser side of [`docs/CONTRACT.md`](../docs/CONTRACT.md).
 
 - **Activity** (`/activity`): keyset-paginated grid (`GET /api/activity`, "Load more") with area,
@@ -14,7 +14,7 @@ exports. It implements the browser side of [`docs/CONTRACT.md`](../docs/CONTRACT
   `queued`/`running`; stops when none are, pauses while the tab is hidden, and restarts at 5 s when
   a new export is queued. A toast fires when a job completes or fails, on any page.
 
-Runtime dependencies are only `react`, `react-dom` and `react-router-dom`. Styling is plain CSS
+Runtime dependencies are only `react`, `react-dom` and `react-router` (v7). Styling is plain CSS
 modules with light/dark themes via `prefers-color-scheme`.
 
 ## Scripts
