@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import { App, ROUTER_FUTURE } from '../App';
+import { MemoryRouter } from 'react-router';
+import { App } from '../App';
 
 interface Options {
   route?: string;
@@ -13,7 +13,7 @@ interface Options {
 export function renderApp({ route = '/activity', pollMinMs = 20, pollMaxMs = 80 }: Options = {}) {
   const user = userEvent.setup();
   const utils = render(
-    <MemoryRouter initialEntries={[route]} future={ROUTER_FUTURE}>
+    <MemoryRouter initialEntries={[route]}>
       <App pollMinMs={pollMinMs} pollMaxMs={pollMaxMs} />
     </MemoryRouter>,
   );

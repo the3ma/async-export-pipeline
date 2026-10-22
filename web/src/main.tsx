@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { App, ROUTER_FUTURE } from './App';
+import { BrowserRouter } from 'react-router';
+import { App } from './App';
 import './styles/global.css';
 
 async function enableMocks() {
@@ -17,7 +17,7 @@ if (!root) throw new Error('#root element missing');
 void enableMocks().then(() => {
   createRoot(root).render(
     <StrictMode>
-      <BrowserRouter future={ROUTER_FUTURE}>
+      <BrowserRouter>
         <App />
       </BrowserRouter>
     </StrictMode>,

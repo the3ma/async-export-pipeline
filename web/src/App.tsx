@@ -1,13 +1,10 @@
-import { Link, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, Navigate, Route, Routes } from 'react-router';
 import { AppHeader } from './components/AppHeader';
 import { ActivityPage } from './pages/ActivityPage';
 import { ExportsPage } from './pages/ExportsPage';
 import { ExportsProvider } from './state/ExportsContext';
 import type { ExportsProviderProps } from './state/ExportsContext';
 import { ToastProvider } from './state/ToastContext';
-
-/** Opt in to React Router v7 behaviour now (silences the v6 deprecation warnings). */
-export const ROUTER_FUTURE = { v7_startTransition: true, v7_relativeSplatPath: true } as const;
 
 type Props = Pick<ExportsProviderProps, 'pollMinMs' | 'pollMaxMs'>;
 
