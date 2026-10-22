@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach } from 'vitest';
 import { db } from '../mocks/db';
 import { server } from '../mocks/server';
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }));
 beforeEach(() => db.reset());
 afterEach(() => {
   cleanup();

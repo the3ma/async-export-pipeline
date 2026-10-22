@@ -25,8 +25,8 @@ export function ActivityPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const ids = { area: useId(), action: useId(), from: useId(), to: useId(), err: useId() };
 
   const rangeInvalid = Boolean(filters.from && filters.to && filters.from > filters.to);
@@ -41,6 +41,12 @@ export function ActivityPage() {
     [filters],
   );
 
+  // The query the current rows belong to. Loading is derived from it rather than set inside the
+  // effect, so a filter change costs one render, not two.
+  const [loadedFor, setLoadedFor] = useState<typeof query | null>(null);
+  const loading = (!rangeInvalid && loadedFor !== query) || loadingMore;
+  const visibleError = loading ? null : error;
+
   const exportFilters: ExportFilters = useMemo(() => {
     const f: ExportFilters = {};
     if (query.action) f.action = query.action;
@@ -53,28 +59,26 @@ export function ActivityPage() {
   useEffect(() => {
     if (rangeInvalid) return;
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
     listActivity({ ...query, limit: PAGE_SIZE }, controller.signal)
       .then((page) => {
         setRows(page.items);
         setCursor(page.next_cursor);
+        setError(null);
+        setLoadedFor(query);
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         setRows([]);
         setCursor(null);
         setError(err instanceof Error ? err.message : 'Could not load activity.');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        setLoadedFor(query);
       });
     return () => controller.abort();
   }, [query, rangeInvalid]);
 
   const loadMore = useCallback(async () => {
     if (!cursor) return;
-    setLoading(true);
+    setLoadingMore(true);
     try {
       const page = await listActivity({ ...query, limit: PAGE_SIZE, cursor });
       setRows((all) => [...all, ...page.items]);
@@ -82,7 +86,7 @@ export function ActivityPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load more activity.');
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
   }, [cursor, query]);
 
@@ -180,13 +184,13 @@ export function ActivityPage() {
       <p className={`muted ${styles.summary}`} role="status" aria-live="polite">
         {loading
           ? 'Loading activity…'
-          : error
+          : visibleError
             ? ''
             : `Showing ${formatCount(rows.length)} ${rows.length === 1 ? 'event' : 'events'}${cursor ? ' (more available)' : ''}.`}
       </p>
-      {error && (
+      {visibleError && (
         <p className="field-error" role="alert">
-          Could not load activity: {error}
+          Could not load activity: {visibleError}
         </p>
       )}
 
@@ -220,7 +224,7 @@ export function ActivityPage() {
                 <td className={styles.mono}>{row.actor_id}</td>
               </tr>
             ))}
-            {!loading && !error && rows.length === 0 && (
+            {!loading && !visibleError && rows.length === 0 && (
               <tr>
                 <td colSpan={6} className={styles.empty}>
                   No activity matches these filters.

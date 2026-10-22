@@ -101,19 +101,25 @@ export function ExportsProvider({
     [toast],
   );
 
-  const refresh = useCallback(async () => {
-    try {
-      const page = await listExports({ limit: PAGE_SIZE });
-      announceTransitions(page.items);
-      setJobs(page.items);
-      setNextCursor(page.next_cursor);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load exports.');
-    } finally {
-      setLoaded(true);
-    }
-  }, [announceTransitions]);
+  // A promise chain rather than async/await: state is only ever set in the callbacks, which keeps
+  // the mount effect below free of synchronous setState (react-hooks/set-state-in-effect).
+  const refresh = useCallback(
+    () =>
+      listExports({ limit: PAGE_SIZE })
+        .then((page) => {
+          announceTransitions(page.items);
+          setJobs(page.items);
+          setNextCursor(page.next_cursor);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : 'Could not load exports.');
+        })
+        .finally(() => {
+          setLoaded(true);
+        }),
+    [announceTransitions],
+  );
 
   useEffect(() => {
     void refresh();

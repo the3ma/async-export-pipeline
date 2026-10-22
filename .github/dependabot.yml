@@ -14,12 +14,30 @@ updates:
     groups:
       web-minor:
         update-types: [minor, patch]
+    ignore:
+      # @types/node follows the Node runtime (22 LTS), not the latest Node release.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+      # typescript-eslint supports TypeScript < 6.1; upgrade the two together by hand.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /infra
     schedule: { interval: weekly }
     groups:
       infra-minor:
         update-types: [minor, patch]
+    ignore:
+      # @types/node follows the Node runtime (22 LTS), not the latest Node release.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+      # typescript-eslint supports TypeScript < 6.1; upgrade the two together by hand.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # cdk-nag 3 replaces NagSuppressions with Validations.acknowledge() and does not yet support
+      # the regex/prefix suppressions this stack uses; migrate deliberately.
+      - dependency-name: cdk-nag
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
