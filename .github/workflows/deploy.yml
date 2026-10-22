@@ -128,7 +128,7 @@ jobs:
         with:
           role-to-assume: ${{ env.AWS_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: env.AWS_ROLE != ''
         with:
           node-version: 22
