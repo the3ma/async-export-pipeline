@@ -1,0 +1,35 @@
+{
+  "name": "async-export-pipeline-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK v2 app for the async export pipeline (S3 + SQS + DynamoDB + Lambda + HTTP API).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "jest",
+    "synth": "cdk synth -c stage=dev -c skipBundling=true",
+    "synth:prod": "cdk synth -c stage=prod -c skipBundling=true",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.200.0",
+    "cdk-nag": "^2.38.2",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.15.0",
+    "aws-cdk": "^2.1020.0",
+    "eslint": "^9.30.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.35.0"
+  }
+}

@@ -1,0 +1,54 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.queued {
+  background: var(--pill-queued-bg);
+  color: var(--pill-queued-fg);
+}
+
+.running {
+  background: var(--pill-running-bg);
+  color: var(--pill-running-fg);
+}
+
+.running::before {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.completed {
+  background: var(--pill-completed-bg);
+  color: var(--pill-completed-fg);
+}
+
+.failed {
+  background: var(--pill-failed-bg);
+  color: var(--pill-failed-fg);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running::before {
+    animation: none;
+  }
+}

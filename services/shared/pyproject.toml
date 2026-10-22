@@ -1,0 +1,14 @@
+[project]
+name = "exportkit"
+version = "0.1.0"
+description = "Shared models, naming, object keys and the DynamoDB job store for the export pipeline"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.35",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

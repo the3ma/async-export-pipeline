@@ -1,0 +1,4 @@
+dist
+coverage
+mock-public
+package-lock.json

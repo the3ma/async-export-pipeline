@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# Node
+node_modules/
+dist/
+coverage/
+# CDK
+infra/cdk.out/
+infra/*.zip
+# Local env / OS
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+# smoke-test downloads
+.smoke/
+infra/.build/

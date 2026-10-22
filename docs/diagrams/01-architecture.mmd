@@ -1,0 +1,34 @@
+flowchart LR
+  subgraph Client
+    UI["Web UI<br/>React + Vite"]
+  end
+  subgraph API_TIER["API (Lambda, FastAPI + Mangum)"]
+    API["export_api<br/>POST /api/exports -> 202"]
+  end
+  subgraph ASYNC["Async pipeline"]
+    Q[["SQS export-requests<br/>visibility 960 s"]]
+    DLQ[["SQS DLQ<br/>maxReceiveCount 3"]]
+    W["export_worker Lambda<br/>Python 3.12 arm64"]
+  end
+  subgraph STORES["State and data"]
+    DDB[("DynamoDB exports<br/>GSI owner + requested_at<br/>TTL expires_at")]
+    PG[("PostgreSQL<br/>activity_event")]
+    S3[("S3 exports<br/>7-day lifecycle")]
+  end
+  MAIL["SES / SMTP<br/>notification, no link to file"]
+  CW["CloudWatch alarms -> SNS"]
+
+  UI -- "HTTPS /api" --> API
+  API -- "create job" --> DDB
+  API -- "send stage message" --> Q
+  API -- "audit row on download" --> PG
+  API -- "presign 60 s" --> S3
+  Q --> W
+  Q -. "after 3 failures" .-> DLQ
+  W -- "keyset read (exporter role)" --> PG
+  W -- "parts + zip" --> S3
+  W -- "progress, status" --> DDB
+  W -- "next part / zip" --> Q
+  W --> MAIL
+  DLQ -.-> CW
+  W -.-> CW

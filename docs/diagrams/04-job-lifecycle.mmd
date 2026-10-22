@@ -1,0 +1,17 @@
+stateDiagram-v2
+  direction LR
+  [*] --> queued: POST /api/exports
+  queued --> running: worker claims
+  queued --> failed: queue send fails
+  running --> completed: last part or zip done
+  running --> failed: check or retries fail
+  completed --> [*]: TTL 7 days
+  failed --> [*]: TTL 7 days
+  note right of running
+    one part per invocation,
+    parts_done and next_cursor saved
+  end note
+  note right of failed
+    failure_code: QUEUE_SEND_FAILED,
+    TOO_LARGE, ROWSET_CHANGED, WORKER_ERROR
+  end note

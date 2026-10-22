@@ -1,0 +1,25 @@
+sequenceDiagram
+  autonumber
+  actor U as Owner
+  participant W as Web UI
+  participant A as API
+  participant J as DynamoDB exports
+  participant P as PostgreSQL
+  participant S as S3
+  U->>W: click Download
+  W->>A: POST /api/exports/{id}/download
+  A->>J: get job
+  alt not the owner
+    A-->>W: 404 (existence not revealed)
+  else not completed
+    A-->>W: 409 NOT_READY
+  else past expires_at
+    A-->>W: 410 EXPIRED
+  else ready
+    A->>P: INSERT audit row
+    Note over A,P: activity_event action=export, entity=download<br/>written before any URL exists
+    A->>S: presign GET, 60 s
+    A-->>W: url + file_name
+    W->>S: GET object
+    S-->>U: file
+  end

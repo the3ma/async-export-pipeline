@@ -1,0 +1,20 @@
+[project]
+name = "export-worker"
+version = "0.1.0"
+description = "Export worker: SQS-driven Lambda handler plus a local long-polling runner"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "exportkit",
+    "psycopg[binary]>=3.2",
+    "xlsxwriter>=3.2",
+]
+
+[project.scripts]
+export-worker-poller = "export_worker.poller:main"
+
+[tool.uv.sources]
+exportkit = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

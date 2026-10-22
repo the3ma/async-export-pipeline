@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call: # reused by deploy.yml as its quality gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (api, worker, shared)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: activity
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d activity"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # integration tests apply db/001_schema.sql themselves, then connect as app / exporter
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/activity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.18"
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Tests (unit + integration on PostgreSQL 16)
+        run: uv run pytest -q
+
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test -- --run
+      - run: npm run build
+
+  infra:
+    name: Infrastructure (CDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.18"
+      - run: npm ci
+        working-directory: infra
+      - run: npm run lint
+        working-directory: infra
+      - run: npm test
+        working-directory: infra
+      - name: Build Lambda artifacts (arm64 wheels, no Docker)
+        run: |
+          infra/scripts/build-lambda-artifact.sh worker
+          infra/scripts/build-lambda-artifact.sh api
+      - name: Synth dev + prod from the artifacts (cdk-nag runs during synth)
+        working-directory: infra
+        run: |
+          npx cdk synth -q -c stage=dev  -c workerArtifact=.build/worker.zip -c apiArtifact=.build/api.zip
+          npx cdk synth -q -c stage=prod -c workerArtifact=.build/worker.zip -c apiArtifact=.build/api.zip
+
+  compose-smoke:
+    name: End-to-end (docker compose)
+    runs-on: ubuntu-latest
+    needs: [python, web]
+    env:
+      SEED_ROWS: "150000" # with PART_ROWS=50000 the export must split into 3 parts and be zipped
+      PART_ROWS: "50000"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the stack
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Seed the activity log
+        run: docker compose --profile seed run --rm seed
+      - name: Smoke test
+        run: ./scripts/smoke.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=300
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

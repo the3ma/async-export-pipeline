@@ -1,0 +1,106 @@
+# Local stack: the whole pipeline on one machine. Same code paths as AWS - only the endpoints differ.
+#   make up      -> build + start everything      make seed   -> load the demo activity log
+#   make smoke   -> end-to-end export test         make down   -> stop and remove volumes
+name: async-export-pipeline
+
+x-aws-env: &aws-env
+  AWS_ENDPOINT_URL: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test          # LocalStack dummy credentials (local only)
+  AWS_SECRET_ACCESS_KEY: test
+  EXPORT_BUCKET: exports
+  EXPORT_QUEUE_URL: http://localstack:4566/000000000000/export-requests
+  JOBS_TABLE: exports
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: activity
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres    # local demo only
+    ports: ["5432:5432"]
+    volumes:
+      - ./db/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d activity"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: loads SEED_ROWS deterministic activity events (default 1.2M, about a minute).
+  seed:
+    image: postgres:16-alpine
+    profiles: ["seed"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./db/002_seed.sql:/seed/002_seed.sql:ro
+    entrypoint: ["sh", "-c", "psql -h db -U postgres -d activity -v ON_ERROR_STOP=1 -v rows=${SEED_ROWS:-1200000} -f /seed/002_seed.sql"]
+
+  localstack:
+    image: localstack/localstack:4
+    environment:
+      SERVICES: s3,sqs,dynamodb
+      AWS_DEFAULT_REGION: us-east-1
+    ports: ["4566:4566"]
+    volumes:
+      - ./deploy/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    healthcheck:
+      # healthy only after the init hook created the bucket, queues and table
+      test: ["CMD-SHELL", "awslocal dynamodb describe-table --table-name exports >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build: { context: ., dockerfile: services/api/Dockerfile }
+    depends_on:
+      db: { condition: service_healthy }
+      localstack: { condition: service_healthy }
+    environment:
+      <<: *aws-env
+      DATABASE_URL: postgresql://app:app@db:5432/activity
+      PUBLIC_S3_ENDPOINT_URL: http://localhost:4566   # pre-signed URLs must open in the host browser
+      PRESIGN_SECONDS: "60"
+      AUTH_MODE: header
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports: ["8000:8000"]
+
+  worker:
+    build: { context: ., dockerfile: services/worker/Dockerfile }
+    depends_on:
+      db: { condition: service_healthy }
+      localstack: { condition: service_healthy }
+    environment:
+      <<: *aws-env
+      DATABASE_URL: postgresql://exporter:exporter@db:5432/activity   # read-only role
+      PART_ROWS: ${PART_ROWS:-50000}
+      MAX_PARTS: ${MAX_PARTS:-20}
+      MAIL_TRANSPORT: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      MAIL_FROM: exports@example.test
+      MAIL_TO_DOMAIN: example.test
+      APP_BASE_URL: http://localhost:8080
+      RETRY_DELAY_SECONDS: "15"
+
+  web:
+    build: { context: ./web, target: serve }
+    depends_on: [api]
+    environment:
+      API_UPSTREAM: http://api:8000
+      DEMO_USER_ID: demo-user
+      DNS_RESOLVER: 127.0.0.11
+    ports: ["8080:80"]
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025", "1025:1025"]
+
+volumes:
+  pgdata:
