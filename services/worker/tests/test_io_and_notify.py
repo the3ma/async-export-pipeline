@@ -169,6 +169,16 @@ def test_poller_deletes_only_successful_messages(sqs: Any, queue_url: str) -> No
     assert attrs["ApproximateNumberOfMessagesNotVisible"] == "1"  # the failed one, for a retry
 
 
+def test_poller_read_timeout_outlasts_the_long_poll() -> None:
+    from export_worker.config import WorkerSettings
+    from export_worker.poller import sqs_client
+
+    settings = WorkerSettings(database_url="postgresql://unused", poll_wait_seconds=20)
+    timeout = sqs_client(settings).meta.config.read_timeout
+    assert timeout > settings.poll_wait_seconds
+    assert timeout == settings.poll_wait_seconds + settings.aws_read_timeout
+
+
 def test_lambda_event_shape() -> None:
     event = to_lambda_event(
         [{"MessageId": "1", "ReceiptHandle": "r", "Body": "{}", "Attributes": {"A": "1"}}]

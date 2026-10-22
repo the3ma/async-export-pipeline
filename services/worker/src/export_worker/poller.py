@@ -65,11 +65,20 @@ def poll_once(sqs: Any, queue_url: str, worker: ExportWorker, settings: WorkerSe
     return len(messages)
 
 
+def sqs_client(settings: WorkerSettings) -> Any:
+    # The read timeout must outlast the long poll. If the client gives up first, the queue still
+    # completes the abandoned request: a message arriving then is delivered to nobody and stays
+    # invisible for the whole visibility timeout.
+    return aws.client(
+        "sqs", settings, read_timeout=settings.poll_wait_seconds + settings.aws_read_timeout
+    )
+
+
 def main() -> None:
     settings = WorkerSettings()
     configure_logging("worker-poller", settings.log_level)
     worker = build_worker(settings)
-    sqs = aws.client("sqs", settings)
+    sqs = sqs_client(settings)
     stopping = False
 
     def stop(signum: int, _frame: FrameType | None) -> None:
