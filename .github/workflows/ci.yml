@@ -32,8 +32,8 @@ jobs:
       # integration tests apply db/001_schema.sql themselves, then connect as app / exporter
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/activity
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           version: "0.11.18"
           enable-cache: true
@@ -53,8 +53,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -69,13 +69,13 @@ jobs:
     name: Infrastructure (CDK)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: infra/package-lock.json
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
         with:
           version: "0.11.18"
       - run: npm ci
@@ -102,7 +102,7 @@ jobs:
       SEED_ROWS: "150000" # with PART_ROWS=50000 the export must split into 3 parts and be zipped
       PART_ROWS: "50000"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start the stack
         run: docker compose up -d --build --wait --wait-timeout 300
       - name: Seed the activity log
