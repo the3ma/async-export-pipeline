@@ -123,7 +123,7 @@ jobs:
       - name: Verify artifact checksums
         if: env.AWS_ROLE != ''
         run: cd infra/.build && sha256sum -c SHA256SUMS
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         if: env.AWS_ROLE != ''
         with:
           role-to-assume: ${{ env.AWS_ROLE }}
