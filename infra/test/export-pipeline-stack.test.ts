@@ -236,7 +236,7 @@ describe('IAM least privilege', () => {
       const statements: { Principal?: { Service?: string | string[] } }[] =
         role.Properties.AssumeRolePolicyDocument.Statement;
       const services = statements.flatMap((s) => [s.Principal?.Service ?? []].flat());
-      if (services.includes('lambda.amazonaws.com')) {
+      if (services.some((service) => service === 'lambda.amazonaws.com')) {
         lambdaRoles += 1;
         expect(role.Properties.ManagedPolicyArns).toBeUndefined();
       }
