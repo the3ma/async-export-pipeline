@@ -2,6 +2,9 @@
 
 ## Where we started
 
+> This story is a composite of problems I have met in production systems, not one company's
+> incident; product details and numbers are changed.
+
 The product has an **activity log**, an append-only table with one row for every user action (sign-in,
 record created, setting changed, file downloaded). Support, security and auditors read it every day, and
 they regularly need a copy as a spreadsheet.

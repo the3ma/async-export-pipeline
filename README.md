@@ -28,6 +28,9 @@ FastAPI + SQS + Lambda + DynamoDB + S3, a React UI, AWS CDK, and a one-command l
 
 ## The problem
 
+> This story is a composite of problems I have met in production systems, not one company's
+> incident; product details and numbers are changed.
+
 An activity log - one append-only row per user action - had an "Export CSV" button backed by a
 single synchronous request. It worked in the demo and failed in production:
 
