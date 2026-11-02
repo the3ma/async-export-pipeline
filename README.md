@@ -4,6 +4,10 @@
 
 **Exporting millions of rows without timeouts, memory blow-ups or leaked download links.**
 
+<img src="docs/images/exports-tray.png" alt="Activity Log web UI with the My exports tray open: a new export running in the background, a completed export with a Download button, a failed one with its reason, and an expired one" width="880">
+
+<sub>The web UI: an export runs in the background while you keep working; each job ends completed, failed with a reason, or expired. Shown with <code>npm run dev:mock</code> demo data.</sub>
+
 A reference implementation of an asynchronous, streaming, audited export pipeline:
 FastAPI + SQS + Lambda + DynamoDB + S3, a React UI, AWS CDK, and a one-command local stack.
 
