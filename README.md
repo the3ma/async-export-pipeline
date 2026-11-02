@@ -4,6 +4,8 @@
 
 **Exporting millions of rows without timeouts, memory blow-ups or leaked download links.**
 
+**[Read the case study →](https://the3ma.github.io/async-export-pipeline/)** - the ten production failures, the architecture, five ADRs and the trade-offs.
+
 <img src="docs/images/exports-tray.png" alt="Activity Log web UI with the My exports tray open: a new export running in the background, a completed export with a Download button, a failed one with its reason, and an expired one" width="880">
 
 <sub>The web UI: an export runs in the background while you keep working; each job ends completed, failed with a reason, or expired. Shown with <code>npm run dev:mock</code> demo data.</sub>

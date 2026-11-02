@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Async export pipeline · Case study</title>
+  <meta name="description" content="Case study: exporting millions of rows from an append-only activity log as an asynchronous, streaming, audited job - the ten production failures, the architecture, five ADRs and the trade-offs.">
+  <meta property="og:title" content="Async export pipeline · Case study">
+  <meta property="og:description" content="An export is a job, not a request: how a one-request Export CSV became a streaming, audited AWS pipeline.">
+  <meta property="og:type" content="article">
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="assets/fonts/overpass-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script>
+    // Saved theme before first paint; otherwise follow the system (dark-first stylesheet).
+    (function () {
+      var root = document.documentElement, saved = null;
+      try { saved = localStorage.getItem('theme'); } catch (e) {}
+      if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+      var dark = saved ? saved === 'dark' : !window.matchMedia('(prefers-color-scheme: light)').matches;
+      root.setAttribute('data-resolved', dark ? 'dark' : 'light');
+    })();
+  </script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="product" href="#top"><span class="mark" aria-hidden="true"></span><strong><span class="long">Async export pipeline</span><span class="short">Export pipeline</span></strong><span class="sub">Case study</span></a>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary btn-sm theme-toggle" type="button" id="theme-toggle" aria-pressed="false">
+        <svg class="icon-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <svg class="icon-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span class="label">Light theme</span>
+      </button>
+      <a class="btn btn-primary btn-sm topbar-contact" href="#contact" aria-label="Contact"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span class="label">Contact</span></a>
+    </div>
+  </div>
+  <div class="progress" aria-hidden="true"></div>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top" aria-labelledby="title">
+  <div class="wrap">
+    <h1 id="title">An export is a job, not a request.</h1>
+    <p class="lead">How a one-request &ldquo;Export CSV&rdquo; on an append-only activity log became an asynchronous, streaming, audited pipeline: millions of rows, no timeouts, no memory blow-ups, no silent truncation and no leaked download links. A public reference architecture, generalized from production work, with every decision recorded as an ADR.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#contact">Contact</a>
+      <a class="btn btn-secondary" href="#architecture">Read the architecture</a>
+    </div>
+
+    <figure class="hero-map" aria-labelledby="hm-t">
+      <div class="map-h"><div class="diagram" tabindex="0" role="region" aria-label="The line one export rides">
+        <svg class="dg" viewBox="0 0 1100 260" role="img" aria-labelledby="hm-t hm-d">
+          <title id="hm-t">The line one export rides</title>
+          <desc id="hm-d">The export line runs through six stations: request (POST returns 202 Accepted), claim (queued to running), plan (pin the high-water mark), parts 1 to N of one million rows, zip into one download, completed. From completed, the notify line goes to an e-mail that links to the My exports tray. From the tray, the audit line runs through the owner check and the audit row to a presigned URL valid for 60 seconds.</desc>
+          <path class="rail export" d="M60,90 L1040,90"/>
+          <path class="rail notify" d="M1040,90 L1040,160 Q1040,196 1004,196 L700,196"/>
+          <path class="rail audit" d="M700,196 L260,196"/>
+
+          <circle class="stn export" cx="60" cy="90" r="11"/>
+          <circle class="stn export" cx="250" cy="90" r="11"/>
+          <circle class="stn export" cx="450" cy="90" r="11"/>
+          <circle class="stn export" cx="650" cy="90" r="11"/>
+          <circle class="stn export" cx="850" cy="90" r="11"/>
+          <circle class="stn ix" cx="1040" cy="90" r="14"/>
+          <circle class="stn notify" cx="880" cy="196" r="11"/>
+          <circle class="stn ix" cx="700" cy="196" r="14"/>
+          <circle class="stn audit" cx="560" cy="196" r="11"/>
+          <circle class="stn audit" cx="410" cy="196" r="11"/>
+          <circle class="stn term" cx="260" cy="196" r="13" style="fill:var(--l-audit);stroke:var(--l-audit)"/>
+
+          <text class="title" x="60" y="52" text-anchor="middle">Request</text>
+          <text class="small" x="60" y="128" text-anchor="middle">POST → 202 Accepted</text>
+          <text class="title" x="250" y="52" text-anchor="middle">Claim</text>
+          <text class="small" x="250" y="128" text-anchor="middle">queued &#8594; running</text>
+          <text class="title" x="450" y="52" text-anchor="middle">Plan</text>
+          <text class="small" x="450" y="128" text-anchor="middle">pin the high-water mark</text>
+          <text class="title" x="650" y="52" text-anchor="middle">Parts 1&#8230;N</text>
+          <text class="small" x="650" y="128" text-anchor="middle">1,000,000 rows each</text>
+          <text class="title" x="850" y="52" text-anchor="middle">Zip</text>
+          <text class="small" x="850" y="128" text-anchor="middle">one download</text>
+          <text class="title" x="1040" y="52" text-anchor="middle">Completed</text>
+
+          <text class="title" x="880" y="236" text-anchor="middle">E-mail</text>
+          <text class="small" x="880" y="254" text-anchor="middle">links to the tray, never the file</text>
+          <text class="title" x="700" y="166" text-anchor="middle">My exports</text>
+          <text class="title" x="560" y="236" text-anchor="middle">Owner check</text>
+          <text class="title" x="410" y="236" text-anchor="middle">Audit row first</text>
+          <text class="title" x="260" y="236" text-anchor="middle">URL valid 60 s</text>
+        </svg>
+      </div>
+      <p class="scroll-note">Swipe the map sideways to follow the whole line.</p></div>
+      <div class="map-v">
+        <svg class="dg" viewBox="0 0 340 790" role="img" aria-labelledby="hmv-t"><title id="hmv-t">The line one export rides, from request to an audited 60-second download</title>
+          <path class="rail export" d="M40,30 L40,390"/><path class="rail notify" d="M40,390 L40,534"/><path class="rail audit" d="M40,534 L40,750"/>
+          <circle class="stn export" cx="40" cy="30" r="11"/><text class="title" x="72" y="28">Request</text><text class="small" x="72" y="46">POST → 202 Accepted</text>
+          <circle class="stn export" cx="40" cy="102" r="11"/><text class="title" x="72" y="100">Claim</text><text class="small" x="72" y="118">queued → running</text>
+          <circle class="stn export" cx="40" cy="174" r="11"/><text class="title" x="72" y="172">Plan</text><text class="small" x="72" y="190">pin the high-water mark</text>
+          <circle class="stn export" cx="40" cy="246" r="11"/><text class="title" x="72" y="244">Parts 1…N</text><text class="small" x="72" y="262">1,000,000 rows each</text>
+          <circle class="stn export" cx="40" cy="318" r="11"/><text class="title" x="72" y="316">Zip</text><text class="small" x="72" y="334">one download</text>
+          <circle class="stn ix" cx="40" cy="390" r="14"/><text class="title" x="72" y="388">Completed</text><text class="small" x="72" y="406">toast and e-mail</text>
+          <circle class="stn notify" cx="40" cy="462" r="11"/><text class="title" x="72" y="460">E-mail</text><text class="small" x="72" y="478">links to the tray, never the file</text>
+          <circle class="stn ix" cx="40" cy="534" r="14"/><text class="title" x="72" y="532">My exports</text><text class="small" x="72" y="550">the tray</text>
+          <circle class="stn audit" cx="40" cy="606" r="11"/><text class="title" x="72" y="604">Owner check</text><text class="small" x="72" y="622">owner, status, expiry</text>
+          <circle class="stn audit" cx="40" cy="678" r="11"/><text class="title" x="72" y="676">Audit row first</text><text class="small" x="72" y="694">no audit, no file</text>
+          <circle class="stn term" cx="40" cy="750" r="13" style="fill:var(--l-audit);stroke:var(--l-audit)"/><text class="title" x="72" y="748">URL valid 60 s</text><text class="small" x="72" y="766">then the file from S3</text>
+        </svg>
+      </div>
+    </figure>
+
+    <dl class="meta">
+      <div><dt>My role</dt><dd>Author &amp; architect</dd></div>
+      <div><dt>Scope</dt><dd>API, worker, AWS infrastructure, web UI, local stack</dd></div>
+      <div><dt>Stack</dt><dd>FastAPI, SQS, Lambda, DynamoDB, S3, CDK, React</dd></div>
+      <div><dt>Status</dt><dd>Public reference &middot; <a href="https://github.com/the3ma/async-export-pipeline">source on GitHub</a></dd></div>
+    </dl>
+  </div>
+</section>
+
+<div class="wrap layout">
+  <nav class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    <ol>
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#failures">The ten failures</a></li>
+      <li><a href="#requirements">Requirements</a></li>
+      <li><a href="#users">Who it serves</a></li>
+      <li><a href="#product">The product</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#decisions">Decisions</a></li>
+      <li><a href="#implementation">Implementation</a></li>
+      <li><a href="#operations">Operations</a></li>
+      <li><a href="#tradeoffs">Trade-offs</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#try">Try it</a></li>
+      <li><a href="#lessons">Lessons</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ol>
+  </nav>
+
+  <article class="article">
+    <details class="toc-mobile">
+      <summary><span>On this page</span><span class="toc-current"></span></summary>
+      <ol>
+        <li><a href="#summary">Summary</a></li>
+        <li><a href="#failures">The ten failures</a></li>
+        <li><a href="#requirements">Requirements</a></li>
+        <li><a href="#users">Who it serves</a></li>
+        <li><a href="#product">The product</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#decisions">Decisions</a></li>
+        <li><a href="#implementation">Implementation</a></li>
+        <li><a href="#operations">Operations</a></li>
+        <li><a href="#tradeoffs">Trade-offs</a></li>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#try">Try it</a></li>
+        <li><a href="#lessons">Lessons</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ol>
+    </details>
+
+    <!-- SUMMARY -->
+    <section class="section" id="summary" aria-labelledby="h-summary">
+      <h2 id="h-summary">Executive summary</h2>
+      <p class="intro">The whole story in thirty seconds.</p>
+      <div class="ruled-3">
+        <div><h3>The problem</h3><p>A one-request &ldquo;Export CSV&rdquo; silently cut large exports at 100,000 rows, timed out after 30 seconds, took the API down with memory spikes and leaked files through e-mailed links.</p></div>
+        <div><h3>The approach</h3><p>Make the export a queued job. Stream rows in 1,000,000-row parts through a keyset cursor pinned to a high-water mark, then hand the file out only through an owner-checked, audited, 60-second link.</p></div>
+        <div><h3>The outcome</h3><p>Any result size with bounded memory and database load, a consistent snapshot, live progress in the UI &mdash; and every download on the audit trail.</p></div>
+      </div>
+    </section>
+
+    <!-- FAILURES -->
+    <section class="section" id="failures" aria-labelledby="h-failures">
+      <h2 id="h-failures">The ten failures</h2>
+      <p class="intro">The first version worked for a week of data. Then the log grew to tens of millions of rows and real users asked for real date ranges.</p>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Symptom</th><th scope="col">Root cause</th><th scope="col">Fixed by</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Symptom">Silent truncation: 2 million rows came back as exactly 100,000</th><td data-label="Root cause">A hard <code>LIMIT 100000</code> was the only memory control</td><td data-label="Fixed by"><span class="fix">streaming, no row limit</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">504 after 30 seconds</th><td data-label="Root cause">Query, serialisation and transfer inside one request</td><td data-label="Fixed by"><span class="fix">async job, part per invocation</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">API pods killed for memory</th><td data-label="Root cause">Every row materialised; the CSV built as one string</td><td data-label="Fixed by"><span class="fix">server-side cursor streaming</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Every other screen slowed down</th><td data-label="Root cause">Unbounded <code>OFFSET</code> scans on the hot table</td><td data-label="Fixed by"><span class="fix">keyset reads, read-only role, capped concurrency</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Two exports of one range, different counts</th><td data-label="Root cause">New rows shifted <code>LIMIT/OFFSET</code> pages</td><td data-label="Fixed by"><span class="fix">pinned high-water mark</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Excel could not open big files</th><td data-label="Root cause">One sheet holds at most 1,048,576 rows</td><td data-label="Fixed by"><span class="fix">1,000,000-row parts, zipped</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">A spinner and duplicate clicks</th><td data-label="Root cause">No job, no status, no progress</td><td data-label="Fixed by"><span class="fix">job status and My exports tray</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Public download links in e-mail</th><td data-label="Root cause">Convenience over security</td><td data-label="Fixed by"><span class="fix">notify without a link</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Files kept forever</th><td data-label="Root cause">No retention policy</td><td data-label="Fixed by"><span class="fix">7-day retention</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Nobody knew who exported what</th><td data-label="Root cause">Downloads ran outside the audit path</td><td data-label="Fixed by"><span class="fix">audit row before the URL</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source-note">A composite of problems met in production systems, not one company&rsquo;s incident; product details and numbers are changed. Full write-up: <a href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/01-the-problem.md">docs/01-the-problem.md</a>.</p>
+    </section>
+
+    <!-- REQUIREMENTS -->
+    <section class="section" id="requirements" aria-labelledby="h-requirements">
+      <h2 id="h-requirements">What the replacement had to guarantee</h2>
+      <p class="intro">Ten failures became eleven requirements: together they are the acceptance test for the design.</p>
+      <ul class="stations">
+        <li><strong>No row limit</strong><span>Any result is exported completely, or the export fails loudly. It never truncates.</span></li>
+        <li><strong>Spreadsheet-safe files</strong><span>Up to 1,000,000 rows in one file; larger results in 1,000,000-row parts, zipped into one download.</span></li>
+        <li><strong>Never block, never buffer</strong><span>No request waits on the export, and no file is ever held whole in memory.</span></li>
+        <li><strong>A consistent snapshot</strong><span>Every exported row existed when the export started; later rows never shift or duplicate pages.</span></li>
+        <li><strong>Bounded database load</strong><span>A read-only role, keyset pagination and capped concurrency.</span></li>
+        <li><strong>Status you can see</strong><span>Queued, running, completed or failed, with parts done, and a tray to re-download until expiry.</span></li>
+        <li><strong>Notify, but never send the file</strong><span>In-app and by e-mail; the e-mail links to the tray, not to a file or URL.</span></li>
+        <li><strong>Owner-only, audited, short-lived download</strong><span>The audit row is written before the URL leaves; the URL expires in seconds.</span></li>
+        <li><strong>Data-free file names</strong><span>Predictable names with no user data, plus <code>_part01-of-03</code> for parts.</span></li>
+        <li><strong>Retention</strong><span>Files and job records disappear after 7 days.</span></li>
+        <li><strong>Operable</strong><span>Retries, a dead-letter queue, alarms, idempotent stages and safe re-delivery.</span></li>
+      </ul>
+    </section>
+
+    <!-- USERS -->
+    <section class="section" id="users" aria-labelledby="h-users">
+      <h2 id="h-users">Who it serves</h2>
+      <p class="intro">Support, security and auditors read the activity log every day and regularly need it as a spreadsheet. Three groups, three different jobs.</p>
+      <div class="ruled-3 personas">
+        <article class="persona">
+          <h3>People who export</h3>
+          <p class="role">Support, security, auditors</p>
+          <dl>
+            <div><dt>Job</dt><dd>Get a complete copy of the log for a date range they can open in a spreadsheet.</dd></div>
+            <div><dt>Pain points</dt><dd>Files that looked complete but were cut; timeouts; no idea whether anything was happening.</dd></div>
+            <div><dt>What they got</dt><dd>Complete files, live progress, a toast when it&rsquo;s done and a tray to download from later.</dd></div>
+          </dl>
+        </article>
+        <article class="persona">
+          <h3>Compliance &amp; security</h3>
+          <p class="role">Own the audit trail</p>
+          <dl>
+            <div><dt>Job</dt><dd>Know who exported which data, and that no copy outlives its purpose.</dd></div>
+            <div><dt>Pain points</dt><dd>Downloads outside the audit path; links forwarded by e-mail; files kept forever.</dd></div>
+            <div><dt>What they got</dt><dd>An audit row for every handed-out URL, owner-only 60-second links and 7-day retention.</dd></div>
+          </dl>
+        </article>
+        <article class="persona">
+          <h3>Engineers &amp; operators</h3>
+          <p class="role">Keep the product up</p>
+          <dl>
+            <div><dt>Job</dt><dd>Run exports without hurting the transactional product.</dd></div>
+            <div><dt>Pain points</dt><dd>One user&rsquo;s export taking the API down; primary-database load; retries making it worse.</dd></div>
+            <div><dt>What they got</dt><dd>Bounded memory and load, idempotent stages, a dead-letter queue and alarms.</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <!-- PRODUCT -->
+    <section class="section" id="product" aria-labelledby="h-product">
+      <h2 id="h-product">The product</h2>
+      <p class="intro">An export runs in the background while you keep working. Each job ends completed, failed with a reason, or expired.</p>
+      <figure class="shot">
+        <picture>
+          <source media="(max-width: 560px)" srcset="images/exports-tray-mobile.png" width="896" height="1520">
+          <img src="images/exports-tray.png" width="2560" height="1520" loading="lazy" decoding="async" alt="Activity Log web UI with the My exports tray open: a new export running in the background, a completed export with a Download button, a failed one with its reason, and an expired one.">
+        </picture>
+        <figcaption><p>The &ldquo;My exports&rdquo; tray of the React UI, shown with the project&rsquo;s mock demo data (<code>npm run dev:mock</code>).</p></figcaption>
+      </figure>
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section class="section" id="architecture" aria-labelledby="h-architecture">
+      <h2 id="h-architecture">Solution architecture</h2>
+      <p class="intro">The API only records the intent and returns. A worker does the heavy lifting in bounded steps, the UI follows the job&rsquo;s status, and the file leaves only through an audited link.</p>
+      <ul class="legend" aria-label="Legend">
+        <li><i></i>Export line</li>
+        <li><i class="audit"></i>Audit line</li>
+        <li><i class="notify"></i>Notify line</li>
+        <li><i class="fail"></i>Failure path</li>
+      </ul>
+      <div class="figures">
+        <figure>
+          <header><h3>System map</h3><span>Figure 1</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="System map diagram">
+            <svg class="dg" viewBox="0 0 920 420" role="img" aria-labelledby="f1-t f1-d">
+              <title id="f1-t">System map</title>
+              <desc id="f1-d">The web UI calls the API. On the export line the API writes the job to DynamoDB and a message to the SQS queue; the worker Lambda takes it, reads the activity log in PostgreSQL through the read-only exporter role, writes parts and the zip to S3, updates progress in DynamoDB and enqueues the next part. On the audit line the API writes an audit row to PostgreSQL before presigning a download URL. On the notify line the worker sends an e-mail through SES. On the failure path, after three receives a message moves to the dead-letter queue, which raises CloudWatch alarms to SNS.</desc>
+              <defs><marker id="ar1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+              <!-- rails -->
+              <path class="rail export" d="M190,80 L280,80"/>
+              <path class="rail audit" d="M190,96 L280,96"/>
+              <path class="rail export" d="M430,80 L520,80"/>
+              <path class="rail export" d="M350,112 L350,200"/>
+              <path class="rail export" d="M430,218 L520,218"/>
+              <path class="rail export" d="M520,238 L430,238"/>
+              <path class="rail export" d="M670,226 L740,226"/>
+              <path class="rail export" d="M610,200 L610,112"/>
+              <path class="rail export" d="M670,244 L700,244 L700,356 L740,356"/>
+              <path class="rail audit" d="M410,112 L410,160 L830,160 L830,200"/>
+              <path class="rail notify" d="M570,252 L570,330"/>
+              <path class="rail fail" d="M350,252 L350,330"/>
+              <path class="rail fail" d="M280,356 L190,356"/>
+              <!-- boxes -->
+              <rect class="box" x="40" y="60" width="150" height="52" rx="10"/><text class="title" x="115" y="82" text-anchor="middle">Web UI</text><text class="small" x="115" y="100" text-anchor="middle">React 19 + Vite</text>
+              <rect class="box" x="280" y="60" width="150" height="52" rx="10"/><text class="title" x="355" y="82" text-anchor="middle">API</text><text class="small" x="355" y="100" text-anchor="middle">FastAPI on Lambda</text>
+              <rect class="ext" x="520" y="60" width="150" height="52" rx="10"/><text class="title" x="595" y="82" text-anchor="middle">Job store</text><text class="small" x="595" y="100" text-anchor="middle">DynamoDB, TTL</text>
+              <rect class="ext" x="280" y="200" width="150" height="52" rx="10"/><text class="title" x="355" y="222" text-anchor="middle">Queue</text><text class="small" x="355" y="240" text-anchor="middle">SQS, visibility 16 min</text>
+              <rect class="box" x="520" y="200" width="150" height="52" rx="10"/><text class="title" x="595" y="222" text-anchor="middle">Worker</text><text class="small" x="595" y="240" text-anchor="middle">Lambda, Python 3.12</text>
+              <rect class="ext" x="740" y="200" width="150" height="52" rx="10"/><text class="title" x="815" y="222" text-anchor="middle">Activity log</text><text class="small" x="815" y="240" text-anchor="middle">PostgreSQL 16</text>
+              <rect class="ext" x="740" y="330" width="150" height="52" rx="10"/><text class="title" x="815" y="352" text-anchor="middle">Files</text><text class="small" x="815" y="370" text-anchor="middle">S3, 7-day lifecycle</text>
+              <rect class="ext" x="500" y="330" width="150" height="52" rx="10"/><text class="title" x="575" y="352" text-anchor="middle">E-mail</text><text class="small" x="575" y="370" text-anchor="middle">SES, no link</text>
+              <rect class="ext" x="280" y="330" width="150" height="52" rx="10"/><text class="title" x="355" y="352" text-anchor="middle">Dead-letter queue</text><text class="small" x="355" y="370" text-anchor="middle">after 3 receives</text>
+              <rect class="ext" x="40" y="330" width="150" height="52" rx="10"/><text class="title" x="115" y="352" text-anchor="middle">Alarms</text><text class="small" x="115" y="370" text-anchor="middle">CloudWatch &#8594; SNS</text>
+              <!-- line labels -->
+              <text class="small lbl" x="475" y="70" text-anchor="middle">create job</text>
+              <text class="small lbl" x="300" y="160" text-anchor="middle">stage message</text>
+              <text class="small lbl" x="475" y="210" text-anchor="middle">take</text>
+              <text class="small lbl" x="475" y="258" text-anchor="middle">next part</text>
+              <text class="small lbl" x="705" y="216" text-anchor="middle">keyset read</text>
+              <text class="small lbl" x="610" y="150" text-anchor="middle">progress</text>
+              <text class="small lbl" x="720" y="300" text-anchor="middle">parts + zip</text>
+              <text class="small lbl" x="700" y="150" text-anchor="middle">audit row first</text>
+              <text class="small lbl" x="235" y="122" text-anchor="middle">download</text>
+              <text class="small lbl" x="604" y="296" text-anchor="middle">notify</text>
+              <text class="small lbl" x="235" y="346" text-anchor="middle">alarm</text>
+            </svg>
+          </div>
+          <figcaption><p>The API never waits on the export and never returns a file. The only way to a file is the audit line: owner check, audit row, then a presigned S3 URL valid for 60 seconds.</p></figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table class="stack-sm">
+            <thead><tr><th scope="col">Piece</th><th scope="col">Locally (docker compose)</th><th scope="col">On AWS (CDK)</th></tr></thead>
+            <tbody>
+              <tr><th scope="row" data-label="Piece">Activity log</th><td data-label="Locally (docker compose)">PostgreSQL 16</td><td data-label="On AWS (CDK)">RDS / Aurora PostgreSQL, via a secret</td></tr>
+              <tr><th scope="row" data-label="Piece">Job store</th><td data-label="Locally (docker compose)">DynamoDB on LocalStack</td><td data-label="On AWS (CDK)">DynamoDB on-demand, TTL, point-in-time recovery in prod</td></tr>
+              <tr><th scope="row" data-label="Piece">Queue + DLQ</th><td data-label="Locally (docker compose)">SQS on LocalStack</td><td data-label="On AWS (CDK)">SQS with server-side encryption</td></tr>
+              <tr><th scope="row" data-label="Piece">Worker</th><td data-label="Locally (docker compose)">A poller container, same handler</td><td data-label="On AWS (CDK)">Lambda, Python 3.12, arm64, 15 min, reserved concurrency</td></tr>
+              <tr><th scope="row" data-label="Piece">API</th><td data-label="Locally (docker compose)">FastAPI container</td><td data-label="On AWS (CDK)">FastAPI on Lambda + HTTP API (Mangum)</td></tr>
+              <tr><th scope="row" data-label="Piece">Files</th><td data-label="Locally (docker compose)">S3 on LocalStack</td><td data-label="On AWS (CDK)">S3, public access blocked, encrypted, 7-day lifecycle</td></tr>
+              <tr><th scope="row" data-label="Piece">E-mail</th><td data-label="Locally (docker compose)">Mailpit</td><td data-label="On AWS (CDK)">Amazon SES</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- DECISIONS -->
+    <section class="section" id="decisions" aria-labelledby="h-decisions">
+      <h2 id="h-decisions">Decisions</h2>
+      <p class="intro">Five architecture decision records, one per hard constraint: request limits, a growing table, worker time limits, the audit trail and e-mail.</p>
+      <div class="ledger">
+        <article class="ledger-row lead">
+          <div class="ledger-head"><h3>An export is an asynchronous job, not a request</h3><a class="adr" href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/adr/0001-async-job-over-sync-request.md">ADR-0001</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>Exports range from a few rows to tens of millions; a request is bounded by a ~30 s timeout, API memory and an open tab.</dd></div>
+            <div><dt>Decision</dt><dd><code>POST /api/exports</code> validates, records a <code>queued</code> job, publishes a queue message and returns <code>202 Accepted</code>. A worker produces the file.</dd></div>
+            <div class="why"><dt>Result</dt><dd>No timeout or memory ceiling ties result size to HTTP. Truncation is impossible by design.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row lead">
+          <div class="ledger-head"><h3>Write the audit row before handing out a URL</h3><a class="adr" href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/adr/0004-audit-before-presign.md">ADR-0004</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>In an activity-log product, exporting the log is itself an activity &mdash; and a presigned download happens outside the application.</dd></div>
+            <div><dt>Decision</dt><dd>One endpoint hands out URLs: owner, status and expiry checked, an <code>export / download</code> row inserted, then a URL valid for 60 seconds.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Every handed-out URL has a matching audit row. No audit, no file.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Keyset pagination plus a pinned high-water mark</h3><a class="adr" href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/adr/0002-keyset-pagination-and-high-water-mark.md">ADR-0002</a></div>
+          <dl>
+            <div><dt>Context</dt><dd><code>LIMIT/OFFSET</code> over a growing table skips or duplicates rows; a long transaction can&rsquo;t span many worker invocations.</dd></div>
+            <div><dt>Decision</dt><dd>Read by <code>(occurred_at, event_id)</code> after the last row seen, and only <code>event_id &lt;= high_water</code>, pinned once at the start.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Every part costs the same, and the snapshot survives across invocations.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>One worker invocation per part, chained through the queue</h3><a class="adr" href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/adr/0003-one-invocation-per-part.md">ADR-0003</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>Lambda has a 15-minute limit, and one failure would throw away all the work done so far.</dd></div>
+            <div><dt>Decision</dt><dd>Stages <code>export</code>, <code>part N</code> and <code>zip</code>, each a queue message that enqueues the next; every stage is idempotent.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Bounded time and memory per step, and a failed part is retried on its own.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Notifications never carry the file or a link to it</h3><a class="adr" href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/adr/0005-no-links-in-email.md">ADR-0005</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>E-mail is forwarded and archived; a link in it is a credential with no owner check, outside the audit path.</dd></div>
+            <div><dt>Decision</dt><dd>The e-mail says what finished and links to the &ldquo;My exports&rdquo; tray; the download goes through the audited endpoint.</dd></div>
+            <div class="why"><dt>Result</dt><dd>A misdirected e-mail leaks nothing; every download is owner-checked.</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <!-- IMPLEMENTATION -->
+    <section class="section" id="implementation" aria-labelledby="h-implementation">
+      <h2 id="h-implementation">Implementation</h2>
+      <p class="intro">The three mechanisms that carry the guarantees, drawn on the same lines.</p>
+      <div class="figures">
+        <figure>
+          <header><h3>Parts on a keyset cursor, under a high-water mark</h3><span>Figure 2</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Keyset parts diagram">
+            <svg class="dg" viewBox="0 0 920 300" role="img" aria-labelledby="f2-t f2-d">
+              <title id="f2-t">Parts on a keyset cursor</title>
+              <desc id="f2-d">The rows to export are ordered by occurred_at and event_id, newest first. At the start the job pins the high-water mark, the largest event_id; rows that arrive later sit beyond it and are excluded. The rows are split into parts of one million rows; each part continues from the cursor at the last row of the previous part, runs as one worker invocation and enqueues the next. After the last part a zip stage builds one download.</desc>
+              <rect class="band-new" x="30" y="110" width="110" height="64" rx="8"/>
+              <text class="small" x="85" y="136" text-anchor="middle">new rows</text>
+              <text class="small" x="85" y="154" text-anchor="middle">excluded</text>
+              <line class="hw" x1="152" y1="84" x2="152" y2="200"/>
+              <text class="title lbl" x="152" y="70" text-anchor="middle" style="fill:var(--l-audit)">high-water mark</text>
+              <text class="small lbl" x="152" y="222" text-anchor="middle">MAX(event_id) at start</text>
+              <rect class="part" x="166" y="110" width="226" height="64" rx="8"/>
+              <text class="title" x="279" y="138" text-anchor="middle">Part 1</text><text class="small" x="279" y="156" text-anchor="middle">1,000,000 rows, 1 invocation</text>
+              <rect class="part" x="402" y="110" width="226" height="64" rx="8"/>
+              <text class="title" x="515" y="138" text-anchor="middle">Part 2</text><text class="small" x="515" y="156" text-anchor="middle">continues after the cursor</text>
+              <rect class="part" x="638" y="110" width="226" height="64" rx="8"/>
+              <text class="title" x="751" y="138" text-anchor="middle">Part 3&#8230;N</text><text class="small" x="751" y="156" text-anchor="middle">same cost at any depth</text>
+              <circle class="stn export" cx="397" cy="110" r="8"/>
+              <circle class="stn export" cx="633" cy="110" r="8"/>
+              <text class="small lbl" x="515" y="92" text-anchor="middle">cursor = last (occurred_at, event_id) of the part before</text>
+              <path class="rail export" d="M279,174 L279,250 L880,250"/>
+              <circle class="stn export" cx="515" cy="250" r="8"/>
+              <circle class="stn export" cx="751" cy="250" r="8"/>
+              <circle class="stn term" cx="880" cy="250" r="11"/>
+              <text class="small lbl" x="600" y="276" text-anchor="middle">each part enqueues the next</text>
+              <text class="title" x="880" y="282" text-anchor="middle">zip</text>
+              <text class="small" x="476" y="34" text-anchor="middle">ordered by occurred_at DESC, event_id DESC  &#8594;</text>
+            </svg>
+          </div>
+          <figcaption><p>The snapshot is defined by data, not by a transaction, so it survives across invocations. A part whose row count doesn&rsquo;t match the plan fails the job with <code>ROWSET_CHANGED</code> instead of producing a silently wrong file.</p></figcaption>
+        </figure>
+
+        <figure>
+          <header><h3>The audited download</h3><span>Figure 3</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Audited download diagram">
+            <svg class="dg" viewBox="0 0 920 210" role="img" aria-labelledby="f3-t f3-d">
+              <title id="f3-t">The audited download</title>
+              <desc id="f3-d">Download is clicked in the tray. The API checks the owner, the status and the expiry, then writes the audit row. Only if that succeeds does it return a presigned URL valid for 60 seconds, which the browser uses to fetch the file from S3. If the audit row cannot be written, the download fails and no file is handed out.</desc>
+              <path class="rail audit" d="M70,80 L850,80"/>
+              <path class="rail fail" d="M430,92 L430,160 L560,160"/>
+              <circle class="stn audit" cx="70" cy="80" r="11"/>
+              <circle class="stn audit" cx="250" cy="80" r="11"/>
+              <circle class="stn ix" cx="430" cy="80" r="14"/>
+              <circle class="stn audit" cx="640" cy="80" r="11"/>
+              <circle class="stn term" cx="850" cy="80" r="13" style="fill:var(--l-audit);stroke:var(--l-audit)"/>
+              <text class="title" x="70" y="44" text-anchor="middle">Download</text>
+              <text class="small" x="70" y="118" text-anchor="middle">clicked in the tray</text>
+              <text class="title" x="250" y="44" text-anchor="middle">Checks</text>
+              <text class="small" x="250" y="118" text-anchor="middle">owner, status, expiry</text>
+              <text class="title" x="430" y="44" text-anchor="middle">Audit row written</text>
+              <text class="title" x="640" y="44" text-anchor="middle">Presigned URL</text>
+              <text class="small" x="640" y="118" text-anchor="middle">valid 60 seconds</text>
+              <text class="title" x="850" y="44" text-anchor="middle">File from S3</text>
+              <text class="small" x="850" y="118" text-anchor="middle">browser to storage</text>
+              <text class="small lbl" x="574" y="164">audit fails &#8594; no file</text>
+            </svg>
+          </div>
+          <figcaption><p>Status endpoints never return URLs, and a copied link is useless within a minute. Every file that leaves has a matching, contemporaneous audit row.</p></figcaption>
+        </figure>
+
+        <figure>
+          <header><h3>Job lifecycle</h3><span>Figure 4</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Job lifecycle diagram">
+            <svg class="dg" viewBox="0 0 920 230" role="img" aria-labelledby="f4-t f4-d">
+              <title id="f4-t">Job lifecycle</title>
+              <desc id="f4-d">A job is queued, claimed as running by a conditional update, and ends completed or failed with a reason code such as TOO_LARGE, ROWSET_CHANGED, WORKER_ERROR or QUEUE_SEND_FAILED. Completed and failed jobs expire after 7 days.</desc>
+              <path class="rail export" d="M90,80 L820,80"/>
+              <path class="rail fail" d="M300,92 L300,170 L560,170"/>
+              <path class="rail fail" d="M560,170 L780,170 Q820,170 820,130 L820,92"/>
+              <circle class="stn export" cx="90" cy="80" r="11"/>
+              <circle class="stn export" cx="300" cy="80" r="11"/>
+              <circle class="stn ix" cx="560" cy="80" r="14"/>
+              <circle class="stn ix" cx="560" cy="170" r="12"/>
+              <circle class="stn term" cx="820" cy="80" r="13"/>
+              <text class="title" x="90" y="44" text-anchor="middle">queued</text>
+              <text class="small" x="90" y="118" text-anchor="middle">202 Accepted</text>
+              <text class="title" x="300" y="44" text-anchor="middle">running</text>
+              <text class="small" x="300" y="118" text-anchor="middle">claimed by a conditional update</text>
+              <text class="title" x="560" y="44" text-anchor="middle">completed</text>
+              <text class="small" x="560" y="118" text-anchor="middle">toast + e-mail</text>
+              <text class="title" x="820" y="44" text-anchor="middle">expired</text>
+              <text class="small" x="820" y="118" text-anchor="middle">TTL 7 days</text>
+              <text class="title lbl" x="560" y="204" text-anchor="middle">failed</text>
+              <text class="small lbl" x="560" y="222" text-anchor="middle">TOO_LARGE, ROWSET_CHANGED, WORKER_ERROR, QUEUE_SEND_FAILED</text>
+            </svg>
+          </div>
+          <figcaption><p>A re-delivered message finds the job already running and stops. If the queue send fails, the job is marked failed at once, so a job never sits in <code>queued</code> forever.</p></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- OPERATIONS -->
+    <section class="section" id="operations" aria-labelledby="h-operations">
+      <h2 id="h-operations">Running it in production</h2>
+      <p class="intro">At-least-once delivery is only safe when every stage can run twice. The rest is making failure loud.</p>
+      <ul class="stations">
+        <li><strong>Idempotent stages</strong><span>Each stage checks the job state and the existing objects before writing, so a re-delivery is harmless.</span></li>
+        <li><strong>Dead-letter queue</strong><span>After 3 receives a message moves to the DLQ, an alarm fires and the job is marked failed.</span></li>
+        <li><strong>Visibility longer than the worker</strong><span>16 minutes against a 15-minute Lambda, so a running message is never handed to a second worker.</span></li>
+        <li><strong>Alarms to SNS</strong><span>DLQ not empty, worker errors, duration near timeout, oldest message age, API errors.</span></li>
+        <li><strong>Policy as code</strong><span>cdk-nag runs on every synth; an unsuppressed finding fails the build, and each suppression states its reason.</span></li>
+        <li><strong>Locked-down storage</strong><span>S3 blocks public access, is encrypted and TLS-only, has no CORS and aborts stale multipart uploads after a day.</span></li>
+        <li><strong>Safe files</strong><span>UTF-8 with BOM, and cells starting with <code>= + - @</code> are escaped against formula injection.</span></li>
+        <li><strong>Private by default</strong><span>An optional VPC mode with no default egress: only the database port and the AWS interface endpoints.</span></li>
+      </ul>
+    </section>
+
+    <!-- TRADE-OFFS -->
+    <section class="section" id="tradeoffs" aria-labelledby="h-tradeoffs">
+      <h2 id="h-tradeoffs">Trade-offs</h2>
+      <p class="intro">Every decision gave something up. These are the costs the ADRs accept on purpose.</p>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Chose</th><th scope="col">Instead of</th><th scope="col">The cost, and why it&rsquo;s worth it</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Chose">A queued job</th><td data-label="Instead of">A synchronous request</td><td data-label="The cost, and why it's worth it">A queue, a worker, a job store and a status lifecycle to keep consistent, tamed by conditional transitions and idempotent stages.</td></tr>
+            <tr><th scope="row" data-label="Chose">High-water mark + keyset</th><td data-label="Instead of">OFFSET paging or a long snapshot transaction</td><td data-label="The cost, and why it's worth it">Relies on the log being append-only, which a trigger enforces by blocking updates and deletes.</td></tr>
+            <tr><th scope="row" data-label="Chose">Parts run one after another</th><td data-label="Instead of">Parallel parts per export</td><td data-label="The cost, and why it's worth it">A single huge export takes longer, but the read load on the database stays capped.</td></tr>
+            <tr><th scope="row" data-label="Chose">No audit, no file</th><td data-label="Instead of">Best-effort audit logging</td><td data-label="The cost, and why it's worth it">If the audit row can&rsquo;t be written, the download fails. Intentional for a compliance trail.</td></tr>
+            <tr><th scope="row" data-label="Chose">E-mail links to the tray</th><td data-label="Instead of">A download link in the e-mail</td><td data-label="The cost, and why it's worth it">One extra click, in exchange for an owner check and an audit row on every download.</td></tr>
+            <tr><th scope="row" data-label="Chose">A hard ceiling of 20 parts</th><td data-label="Instead of">Unbounded exports</td><td data-label="The cost, and why it's worth it">Larger requests fail fast with <code>TOO_LARGE</code> and ask the user to narrow the filters.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- RESULTS -->
+    <section class="section" id="results" aria-labelledby="h-results">
+      <h2 id="h-results">Results</h2>
+      <p class="intro">Every requirement maps to a mechanism, and the mechanisms are checked end to end in CI.</p>
+      <ul class="stations">
+        <li><strong>Complete exports at any size</strong><span>Streaming and parts replace the row limit; a mismatch fails loudly with a reason.</span></li>
+        <li><strong>Bounded memory and load</strong><span>Rows go from a server-side cursor straight into multipart uploads; reads are keyset-based and concurrency-capped.</span></li>
+        <li><strong>The same answer twice</strong><span>The high-water mark keeps every export a consistent snapshot.</span></li>
+        <li><strong>Users can leave and come back</strong><span>Progress, a toast anywhere in the app, and the &ldquo;My exports&rdquo; tray.</span></li>
+        <li><strong>Every download on the trail</strong><span>Owner-only, audited, 60-second links; nothing in e-mail; files gone after 7 days.</span></li>
+        <li><strong>Verified, not asserted</strong><span><code>make smoke</code> runs a multi-part export, zip, audited download and e-mail on the local stack, in CI.</span></li>
+      </ul>
+      <h3 class="subhead">System figures</h3>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">Why</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Setting">Rows per part</th><td class="num" data-label="Value">1,000,000</td><td data-label="Why">Under the spreadsheet limit of 1,048,576 rows per sheet.</td></tr>
+            <tr><th scope="row" data-label="Setting">Maximum parts</th><td class="num" data-label="Value">20</td><td data-label="Why">Above that the job fails fast as <code>TOO_LARGE</code>.</td></tr>
+            <tr><th scope="row" data-label="Setting">Download URL lifetime</th><td class="num" data-label="Value">60 s</td><td data-label="Why">A copied link is useless within a minute.</td></tr>
+            <tr><th scope="row" data-label="Setting">Retention</th><td class="num" data-label="Value">7 days</td><td data-label="Why">S3 lifecycle for files, DynamoDB TTL for jobs.</td></tr>
+            <tr><th scope="row" data-label="Setting">Receives before the DLQ</th><td class="num" data-label="Value">3</td><td data-label="Why">Retries for transient errors, then an alarm.</td></tr>
+            <tr><th scope="row" data-label="Setting">Worker timeout / queue visibility</th><td class="num" data-label="Value">15 / 16 min</td><td data-label="Why">No message is processed by two workers at once.</td></tr>
+            <tr><th scope="row" data-label="Setting">Reserved worker concurrency</th><td class="num" data-label="Value">5</td><td data-label="Why">The default cap on parallel exports, and on database read load.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source-note">Configuration values from the repository&rsquo;s documentation. They describe how the system behaves, not business KPIs; production volumes and costs are not published.</p>
+    </section>
+
+    <!-- TRY IT -->
+    <section class="section" id="try" aria-labelledby="h-try">
+      <h2 id="h-try">Try it yourself</h2>
+      <p class="intro">The whole stack runs locally with one command: PostgreSQL, LocalStack for S3, SQS and DynamoDB, Mailpit and nginx.</p>
+<pre class="terminal" aria-label="Commands to run the project locally"><span class="p">$ </span>git clone https://github.com/the3ma/async-export-pipeline.git
+<span class="p">$ </span>cd async-export-pipeline
+<span class="p">$ </span>make up      <span class="c"># build and start everything, wait until healthy</span>
+<span class="p">$ </span>make seed    <span class="c"># 1.2 million activity events</span>
+<span class="p">$ </span>make smoke   <span class="c"># multi-part export -> zip -> audited download -> e-mail</span></pre>
+      <p class="source-note">No Docker? <code>cd web &amp;&amp; npm ci &amp;&amp; npm run dev:mock</code> runs the UI against mocked APIs. More in <a href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/03-running-locally.md">docs/03-running-locally.md</a> and the <a href="https://github.com/the3ma/async-export-pipeline/blob/main/docs/CONTRACT.md">integration contract</a>.</p>
+    </section>
+
+    <!-- LESSONS -->
+    <section class="section" id="lessons" aria-labelledby="h-lessons">
+      <h2 id="h-lessons">Lessons</h2>
+      <p class="intro">What carries over to the next system that moves a lot of data.</p>
+      <ul class="stations">
+        <li><strong>Exporting a log is itself an event.</strong><span>Audit the export path like any other user action, or the trail has a hole exactly where data leaves.</span></li>
+        <li><strong>Define the snapshot by data, not by a transaction.</strong><span>A pinned high-water mark survives retries and many invocations; a long transaction doesn&rsquo;t.</span></li>
+        <li><strong>Make stages idempotent before adding retries.</strong><span>At-least-once delivery is only safe when running a stage twice changes nothing.</span></li>
+        <li><strong>Convenience is where data leaks.</strong><span>The e-mailed link was the friendliest fix and the worst one.</span></li>
+      </ul>
+    </section>
+
+    <!-- CONTACT -->
+    <section class="contact" id="contact" aria-labelledby="h-contact">
+      <h2 id="h-contact">Moving a lot of data, or need an audit trail?</h2>
+      <p>I design and build systems like this one. If you are hiring, or have a problem that looks like it, I&rsquo;d like to hear about it.</p>
+      <ul class="contact-list">
+        <li><a href="mailto:the3ma@gmail.com"><small>Email</small><b>the3ma@gmail.com</b></a></li>
+        <li><a href="https://www.linkedin.com/in/hristo-atanasov-84a525175/"><small>LinkedIn</small><b>Hristo Atanasov</b></a></li>
+        <li><a href="https://github.com/the3ma"><small>GitHub</small><b>github.com/the3ma</b></a></li>
+      </ul>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="site">
+  <div class="wrap"><p>Generalized from production work: the employer, client and product are not named, and details and numbers are changed. Source code under the MIT licence at <a href="https://github.com/the3ma/async-export-pipeline">github.com/the3ma/async-export-pipeline</a>.</p></div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var media = window.matchMedia('(prefers-color-scheme: light)');
+    var btn = document.getElementById('theme-toggle');
+    var label = btn.querySelector('.label');
+    function isDark() { var t = root.getAttribute('data-theme'); return t ? t === 'dark' : !media.matches; }
+    function render() {
+      var dark = isDark();
+      root.setAttribute('data-resolved', dark ? 'dark' : 'light');
+      label.textContent = dark ? 'Light theme' : 'Dark theme';
+      btn.setAttribute('aria-pressed', String(!dark));
+      btn.setAttribute('aria-label', dark ? 'Switch to the light theme' : 'Switch to the dark theme');
+    }
+    btn.addEventListener('click', function () {
+      var next = isDark() ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('theme', next); } catch (e) {}
+      render();
+    });
+    media.addEventListener('change', render);
+    render();
+
+    // Progress bar + the rail as a transit line: stations passed, current station, line fill.
+    var bar = document.querySelector('.progress');
+    var rail = document.querySelector('.toc ol');
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var mlinks = Array.prototype.slice.call(document.querySelectorAll('.toc-mobile a'));
+    var mcurrent = document.querySelector('.toc-current');
+    var sections = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+    var current = null, ticking = false;
+    function update() {
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      bar.style.transform = 'scaleX(' + (max > 0 ? Math.min(1, window.scrollY / max) : 0) + ')';
+      var active = -1;
+      for (var i = 0; i < sections.length; i++) { if (sections[i] && sections[i].getBoundingClientRect().top <= 140) active = i; }
+      var last = sections[sections.length - 1];
+      if ((max > 0 && window.scrollY >= max - 2) || (last && last.getBoundingClientRect().top < window.innerHeight * 0.6)) active = sections.length - 1;
+      if (active !== current) {
+        [links, mlinks].forEach(function (list) {
+          list.forEach(function (a, j) {
+            if (j === active) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+            a.classList.toggle('passed', j < active);
+          });
+        });
+        if (mcurrent) mcurrent.textContent = active > -1 ? links[active].textContent : '';
+        if (rail) {
+          var fill = 0;
+          if (active > -1 && links[active].offsetParent) {
+            var dot = links[active].getBoundingClientRect(), top = rail.getBoundingClientRect();
+            fill = Math.max(0, dot.top + dot.height / 2 - top.top - 12);
+          }
+          rail.style.setProperty('--fill', fill + 'px');
+        }
+        current = active;
+      }
+      ticking = false;
+    }
+    window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+    window.addEventListener('resize', function () { current = null; update(); });
+    update();
+    var mobile = document.querySelector('.toc-mobile');
+    if (mobile) mobile.addEventListener('click', function (e) { if (e.target.closest('a')) mobile.removeAttribute('open'); });
+  })();
+</script>
+</body>
+</html>
